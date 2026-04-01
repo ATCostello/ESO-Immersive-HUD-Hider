@@ -16,11 +16,6 @@ local AUIUnitFramesToHide = {}
 --------------------------------------------------
 local function SafeSet(control, hidden, alpha, force)
 	if control then
-		-- force hidden stat if passed
-		if force then
-			control:SetHidden(hidden)
-		end
-
 		-- set alpha if not passed directly
 		if not alpha then
 			if hidden then
@@ -41,7 +36,7 @@ local function SafeSet(control, hidden, alpha, force)
 			return
 		end
 
-		current_alpha = 1
+		current_alpha = nil
 		if control:GetAlpha() then
 			current_alpha = control:GetAlpha()
 		end
@@ -51,7 +46,7 @@ local function SafeSet(control, hidden, alpha, force)
 			local animation, timeline = CreateSimpleAnimation(ANIMATION_ALPHA, control, 0)
 			animation:SetAlphaValues(1, 0)
 			animation:SetEasingFunction(ZO_EaseInQuadratic)
-			animation:SetDuration(500)
+			animation:SetDuration(IHH.saved.fadeRate)
 			timeline:SetPlaybackType(ANIMATION_PLAYBACK_ONE_SHOT, 1)
 			control.fadeOut = timeline
 			control.fadeOut:PlayFromStart()
@@ -60,10 +55,15 @@ local function SafeSet(control, hidden, alpha, force)
 			local animation, timeline = CreateSimpleAnimation(ANIMATION_ALPHA, control, 0)
 			animation:SetAlphaValues(0, 1)
 			animation:SetEasingFunction(ZO_EaseInQuadratic)
-			animation:SetDuration(500)
+			animation:SetDuration(IHH.saved.fadeRate)
 			timeline:SetPlaybackType(ANIMATION_PLAYBACK_ONE_SHOT, 1)
 			control.fadeIn = timeline
 			control.fadeIn:PlayFromStart()
+		end
+
+		-- force hidden stat if passed
+		if force then
+			control:SetHidden(hidden)
 		end
 	end
 end
@@ -85,33 +85,36 @@ IHH.defaults = {
 	isHidden = false,
 
 	-- Dynamic mode
-	dynamicMode = false,
+	dynamicMode = false, --
 
-	hideCrosshair = 1,
-	hideChat = 2,
+	hideCrosshair = 1, --
+	hideChat = 2, --
 
-	hideCompass = true,
-	hideActionBar = true,
-	hideBuffs = true,
+	hideCompass = true, --
+	hideActionBar = true, --
+	hideBuffs = true, --
 	hideAttributeBar = true,
-	hideLootLog = true,
-	hideQuestTracker = true,
-	hideTargetInfo = true,
-	hideGroupUnitFrames = true,
+	hideLootLog = true, --
+	hideQuestTracker = true, --
+	hideTargetInfo = true, --
+	hideGroupUnitFrames = true, --
 	hideBossBar = true,
 	hideChatBubbles = true,
 	hideAllNamePlates = true,
 	hideAllHealthBars = false,
 
+	updateRate = 100,
+	fadeRate = 500,
+
 	hideAUI = true,
-	hideMap = true,
+	hideMap = true, --
 	hideBanditsUI = true,
 	hideBanditsCompanions = true,
-	hideSrendarr = true,
-	hideRavaloxTracker = true,
-	hideEventTracker = true,
+	hideSrendarr = true, --
+	hideRavaloxTracker = true, --
+	hideEventTracker = true, --
 	hideFancyActionBar = true,
-	hideCombatMetrics = true,
+	hideCombatMetrics = true, --
 }
 
 --------------------------------------------------
@@ -128,7 +131,7 @@ function IHH.Detect()
 	IHH.hasBanditsCompanions = BCUI ~= nil
 	IHH.hasFancyActionBar = FancyActionBar ~= nil
 
-	IHH.hasMap = AUI ~= nil or FyrMM ~= nil
+	IHH.hasMap = AUI ~= nil or FyrMM ~= nil or BUI ~= nil or VOTANS_MINIMAP ~= nil
 
 	IHH.hasCombatMetrics = CMX ~= nil
 end
@@ -170,7 +173,7 @@ function hideTargetInfo(hidden)
 		end)
 
 		-- AUI target frame
-		if IHH.hasAUI then
+		if IHH.hasAUI and IHH.hideAUI then
 			if AUI.UnitFrames.Target.IsEnabled() then
 				table.insert(AUIUnitFramesToHide, 201)
 				table.insert(AUIUnitFramesToHide, 202)
@@ -188,7 +191,7 @@ function hideTargetInfo(hidden)
 		end)
 
 		-- Reset AUI target hud
-		if IHH.hasAUI then
+		if IHH.hasAUI and IHH.hideAUI then
 			if AUI.UnitFrames.Target.IsEnabled() then
 				AUIUnitFramesToHide = {}
 				hideAUIUnitFrames()
@@ -196,30 +199,52 @@ function hideTargetInfo(hidden)
 			end
 		end
 	end
+
+	SafeSet(BUI_TargetFrame, hidden)
 end
 
 --------------------------------------------------
 -- BANDITS
 --------------------------------------------------
 
-function IHH.ApplyBandits(hidden)
+function IHH.ApplyBanditsAttributes(hidden)
 	if not (IHH.saved.hideBanditsUI and IHH.hasBandits) then
 		return
 	end
 
-	local frames = {
-		"BUI_PlayerFrame",
-		"BUI_TargetFrame",
-		"BUI_CompanionFrame",
-	}
+	SafeSet(BUI_PlayerFrame, hidden)
+end
 
-	for _, name in ipairs(frames) do
-		SafeSet(_G[name], hidden)
+function IHH.hideBanditsBuffs(hidden)
+	if not (IHH.saved.hideBanditsUI and IHH.hasBandits and IHH.hideBuffs) then
+		return
 	end
 
-	if BUI.Vars.DefaultTargetFrame then
-		SafeSet(ZO_TargetUnitFramereticleover, hidden)
+	SafeSet(BUI_Buffs, hidden)
+end
+
+function IHH.hideBanditsMap(hidden)
+	if not (IHH.saved.hideBanditsUI and IHH.hasBandits and IHH.hideMap) then
+		return
 	end
+
+	SafeSet(BUI_Minimap, hidden)
+
+	if BUI.MiniMap and BUI.init.MiniMap and BUI.Vars.MiniMap then
+		if BUI.MiniMap.MapSceneIsShowing then
+			SafeSet(ZO_WorldMap, false)
+		else
+			SafeSet(ZO_WorldMap, hidden)
+		end
+	end
+end
+
+function IHH.ApplyBanditsGroup(hidden)
+	if not (IHH.saved.hideBanditsUI and IHH.hasBandits) then
+		return
+	end
+
+	SafeSet(BUI_GroupSynergy, hidden)
 end
 
 function IHH.ApplyBanditsCompanions(hidden)
@@ -227,8 +252,12 @@ function IHH.ApplyBanditsCompanions(hidden)
 		return
 	end
 
-	if BCUI_CompanionFrame then
-		SafeSet(BCUI_CompanionFrame, hidden, nil, true)
+	SafeSet(BCUI_CompanionFrame, hidden, nil, true)
+
+	if hidden then
+		EVENT_MANAGER:UnregisterForUpdate("BCUI_CompanionFrame", BCUI.Frames.SafetyCheck)
+	else
+		EVENT_MANAGER:RegisterForUpdate("BCUI_CompanionFrame", 5000, BCUI.Frames.SafetyCheck)
 	end
 end
 
@@ -239,8 +268,14 @@ function IHH.ApplySrendarr(hidden)
 
 	for i = 1, Srendarr.NUM_DISPLAY_FRAMES do
 		if Srendarr.displayFrames[i] ~= nil then
-			SafeSet(Srendarr.displayFrames[i], hidden)
+			SafeSet(Srendarr.displayFrames[i], hidden, nil, true)
 		end
+	end
+
+	if hidden then
+		Srendarr.uiHidden = true
+	else
+		Srendarr.uiHidden = false
 	end
 end
 
@@ -325,8 +360,19 @@ function IHH.hideCrosshair()
 	end
 end
 
+function IHH.hideVotansMinimap(hidden)
+	-- votans
+	if VOTANS_MINIMAP then
+		if VOTANS_MINIMAP and WORLD_MAP_MANAGER:IsInMode(41) then
+			SafeSet(ZO_WorldMap, hidden)
+		else
+			SafeSet(ZO_WorldMap, false)
+		end
+	end
+end
+
 function IHH.hideMinimap(hidden)
-	if IHH.saved.hideMap then
+	if IHH.saved.hideMap and IHH.hasMap then
 		if hidden == true then
 			if AUI then
 				if AUI.Minimap.IsEnabled() then
@@ -338,7 +384,9 @@ function IHH.hideMinimap(hidden)
 				FyrMM.Visible = false
 				FyrMM.AutoHidden = true
 			end
-			SafeSet(ZO_WorldMap, hidden)
+			IHH.hideBanditsMap(hidden)
+
+			IHH.hideVotansMinimap(hidden)
 		else
 			if AUI then
 				if AUI.Minimap.IsEnabled() then
@@ -350,13 +398,15 @@ function IHH.hideMinimap(hidden)
 				FyrMM.Visible = true
 				FyrMM.AutoHidden = false
 			end
-			SafeSet(ZO_WorldMap, hidden)
+			IHH.hideBanditsMap(hidden)
+
+			IHH.hideVotansMinimap(hidden)
 		end
 	end
 end
 
 function IHH.hideAUIBuffs(hidden)
-	if not IHH.hasAUI then
+	if not (IHH.hasAUI and IHH.hideBuffs and IHH.hideAUI) then
 		return
 	end
 
@@ -367,7 +417,7 @@ function IHH.hideAUIBuffs(hidden)
 end
 
 function IHH.hideAUIGroupUnitFrames(hidden)
-	if not IHH.hasAUI then
+	if not (IHH.hasAUI and IHH.hideGroupFrames and IHH.hideAUI) then
 		return
 	end
 
@@ -409,7 +459,7 @@ function IHH.hideAUIGroupUnitFrames(hidden)
 end
 
 function IHH.hideAUIAttributeBars(hidden)
-	if not IHH.hasAUI then
+	if not (IHH.hasAUI and IHH.hideAttributeBar and IHH.hideAUI) then
 		return
 	end
 
@@ -447,7 +497,7 @@ function IHH.hideAUIAttributeBars(hidden)
 end
 
 function IHH.hideCombatMetrics(hidden)
-	if not IHH.hasCombatMetrics then
+	if not (IHH.hasCombatMetrics and IHH.hideCombatMetrics) then
 		return
 	end
 
@@ -482,6 +532,10 @@ function IHH.ApplyCore(hidden)
 		if IHH.hasAUI then
 			IHH.hideAUIBuffs(hidden)
 		end
+
+		if IHH.hasBandits then
+			IHH.hideBanditsBuffs(hidden)
+		end
 	end
 
 	-- Attributes
@@ -494,7 +548,7 @@ function IHH.ApplyCore(hidden)
 		end
 
 		-- bandits
-		IHH.ApplyBandits(hidden)
+		IHH.ApplyBanditsAttributes(hidden)
 	end
 
 	-- Nameplates
@@ -540,6 +594,7 @@ function IHH.ApplyCore(hidden)
 
 		-- bandits
 		IHH.ApplyBanditsCompanions(hidden)
+		IHH.ApplyBanditsGroup(hidden)
 	end
 
 	-- Boss bar
@@ -583,7 +638,7 @@ end
 --------------------------------------------------
 
 function IHH.StartEnforcer()
-	EVENT_MANAGER:RegisterForUpdate(IHH.name .. "_enforce", 50, IHH.Enforce)
+	EVENT_MANAGER:RegisterForUpdate(IHH.name .. "_enforce", IHH.saved.updateRate, IHH.Enforce)
 end
 
 function IHH.StopEnforcer()
@@ -691,6 +746,17 @@ function IHH.BuildMenu()
 
 		{
 			type = "checkbox",
+			name = "Hide Attribute Bars",
+			getFunc = function()
+				return IHH.saved.hideAttributeBar
+			end,
+			setFunc = function(v)
+				IHH.saved.hideAttributeBar = v
+			end,
+		},
+
+		{
+			type = "checkbox",
 			name = "Hide Buffs",
 			getFunc = function()
 				return IHH.saved.hideBuffs
@@ -713,12 +779,34 @@ function IHH.BuildMenu()
 
 		{
 			type = "checkbox",
+			name = "Hide Group Unit Frames",
+			getFunc = function()
+				return IHH.saved.hideGroupUnitFrames
+			end,
+			setFunc = function(v)
+				IHH.saved.hideGroupUnitFrames = v
+			end,
+		},
+
+		{
+			type = "checkbox",
 			name = "Hide Quest Tracker",
 			getFunc = function()
 				return IHH.saved.hideQuestTracker
 			end,
 			setFunc = function(v)
 				IHH.saved.hideQuestTracker = v
+			end,
+		},
+
+		{
+			type = "checkbox",
+			name = "Hide Loot Log",
+			getFunc = function()
+				return IHH.saved.hideLootLog
+			end,
+			setFunc = function(v)
+				IHH.saved.hideLootLog = v
 			end,
 		},
 
@@ -732,6 +820,36 @@ function IHH.BuildMenu()
 			end,
 			setFunc = function(newValue)
 				IHH.saved.hideChat = newValue
+			end,
+		},
+
+		{
+			type = "slider",
+			name = "Update Rate",
+			min = 5,
+			max = 1000,
+			step = 5,
+			tooltip = "Rate to update the UI detection, measured in in milliseconds. A lower rate will make the UI hiding more responsive, but may cause a small performance drop on toggle.",
+			getFunc = function()
+				return IHH.saved.updateRate
+			end,
+			setFunc = function(v)
+				IHH.saved.updateRate = v
+			end,
+		},
+
+		{
+			type = "slider",
+			name = "Fade speed",
+			min = 5,
+			max = 1000,
+			step = 5,
+			tooltip = "Time to fade out UI elements on toggle. A higher rate will make the fade take longer, setting to 0 will make it instant. Note: Some elements do not support fading - these will always just be toggle instantly.",
+			getFunc = function()
+				return IHH.saved.fadeRate
+			end,
+			setFunc = function(v)
+				IHH.saved.fadeRate = v
 			end,
 		},
 
@@ -843,7 +961,7 @@ function IHH.Initialize()
 
 	IHH.ApplyCore(false)
 
-	EVENT_MANAGER:RegisterForUpdate(IHH.name .. "_crosshair", 500, IHH.hideCrosshair)
+	EVENT_MANAGER:RegisterForUpdate(IHH.name .. "_crosshair", IHH.saved.updateRate, IHH.hideCrosshair)
 
 	IHH.BuildMenu()
 

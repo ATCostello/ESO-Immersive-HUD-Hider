@@ -1,7 +1,7 @@
 ## Title: Immersive HUD Hider
 ## Author: Alfthebigheaded
 ## Description: Toggle visiblity many aspects of the HUD for immersion/RP purposes. Support for multiple UI addons!
-## Version: 2.0
+## Version: 2.01
 ## APIVersion: 101040 101041 101049
 ## SavedVariables: ImmersiveHUDHiderSavedVariables
 ## DependsOn: LibAddonMenu-2.0>=30
