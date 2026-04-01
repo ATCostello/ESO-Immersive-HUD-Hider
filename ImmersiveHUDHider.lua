@@ -1,903 +1,870 @@
 ImmersiveHUDHider = ImmersiveHUDHider or {}
-ImmersiveHUDHider.name = "ImmersiveHUDHider"
-ImmersiveHUDHider.version = 1.12
+local IHH = ImmersiveHUDHider
 
--- AUI Unit frames ID list
+IHH.name = "ImmersiveHUDHider"
+IHH.version = "2.0"
+
+--------------------------------------------------
+-- STATE
+--------------------------------------------------
+
+IHH.active = false
 local AUIUnitFramesToHide = {}
 
-local function hideAUIUnitFrames()
-    local gCurrentTemplateData = AUI.UnitFrames.GetActiveTemplates()
-    for _, templateData in pairs(gCurrentTemplateData) do
-        for frameType, data in pairs(templateData.frameData) do
-            control = data.control
-            for _, templateData in pairs(gCurrentTemplateData) do
-                for frameType, data in pairs(templateData.frameData) do
-                    control = data.control
+--------------------------------------------------
+-- UTILS
+--------------------------------------------------
+local function SafeSet(control, hidden, alpha, force)
+	if control then
+		-- force hidden stat if passed
+		if force then
+			control:SetHidden(hidden)
+		end
 
-                    -- Hides them, they just show back up after change
-                    local timelastrun = 0
-                    control:SetHandler(
-                        "OnUpdate", function(self, timerun)
-                            if (timerun - timelastrun) >= 0 then
-                                timelastrun = timerun
-                                for k, v in pairs(AUIUnitFramesToHide) do
-                                    AUI.UnitFrames.HideFrame(v)
-                                end
-                            end
-                        end
-                    )
+		-- set alpha if not passed directly
+		if not alpha then
+			if hidden then
+				alpha = 0
+			else
+				alpha = 1
+			end
+		end
 
-                    break
-                end
-            end
-            break
-        end
-    end
+		-- fade alpha in/out
+		if control.animation and control.animation:IsPlaying() then
+			return
+		end
+		if control.fadeOut and control.fadeOut:IsPlaying() then
+			return
+		end
+		if control.fadeIn and control.fadeIn:IsPlaying() then
+			return
+		end
+
+		current_alpha = 1
+		if control:GetAlpha() then
+			current_alpha = control:GetAlpha()
+		end
+
+		if alpha == 0 and current_alpha == 1 and hidden == true then
+			-- fade out
+			local animation, timeline = CreateSimpleAnimation(ANIMATION_ALPHA, control, 0)
+			animation:SetAlphaValues(1, 0)
+			animation:SetEasingFunction(ZO_EaseInQuadratic)
+			animation:SetDuration(500)
+			timeline:SetPlaybackType(ANIMATION_PLAYBACK_ONE_SHOT, 1)
+			control.fadeOut = timeline
+			control.fadeOut:PlayFromStart()
+		elseif alpha == 1 and current_alpha == 0 and hidden == false then
+			-- fade in
+			local animation, timeline = CreateSimpleAnimation(ANIMATION_ALPHA, control, 0)
+			animation:SetAlphaValues(0, 1)
+			animation:SetEasingFunction(ZO_EaseInQuadratic)
+			animation:SetDuration(500)
+			timeline:SetPlaybackType(ANIMATION_PLAYBACK_ONE_SHOT, 1)
+			control.fadeIn = timeline
+			control.fadeIn:PlayFromStart()
+		end
+	end
 end
 
--- Default values for settings menu
-ImmersiveHUDHider.defaultSettingsMenu = {
-    hideInteractableGlow = true, hideTargetGlow = true, hideQuestBestowerIndicator = true, hideGroupIndicators = true, hideFollowIndicator = true,
-    hideAllianceIndicators = true, hideResurrectIndicator = true, hideAllHealthBars = true, hideAllNamePlates = true, hideChatBubbles = true,
-    hideActionBar = true, hideAttributeBar = true, hideBuffs = true, hideScrollingCombatText = true, hideLootLog = true, hideCompass = true,
-    hideMap = true, hideQuestTracker = true, hideGroupUnitFrames = true, hideBossBar = true, hideTargetInfo = true
+--------------------------------------------------
+-- DEFAULTS
+--------------------------------------------------
+
+local AUIUnitFramesToHide = {}
+
+local hideChatChoices = { [1] = "Don't Hide Chat", [2] = "Hide Only Background (keep icons)", [3] = "Fully Hide Chat" }
+local hideCrosshairChoices = {
+	[1] = "Don't Adjust Crosshair (Pick me for compatibility with other Crosshair addons)",
+	[2] = "Only Show in Combat",
+	[3] = "Always Hide Crosshair",
 }
 
--- Keep track of default options for in-game HUD settings.
--- Returns previous vanilla settings back to these on disable
-ImmersiveHUDHider.default = {
-    isInterfaceEventHandler = 0, ImmersiveHUDHider_isUIHidden = false,
-    defaultInteractableGlow = GetSetting(SETTING_TYPE_IN_WORLD, IN_WORLD_UI_SETTING_INTERACTABLE_GLOW_ENABLED),
-    defaultTargetGlow = GetSetting(SETTING_TYPE_IN_WORLD, IN_WORLD_UI_SETTING_TARGET_GLOW_ENABLED),
-    defaultQuestBestowerIndicator = GetSetting(SETTING_TYPE_UI, UI_SETTING_SHOW_QUEST_BESTOWER_INDICATORS),
-    defaultGroupIndicators = GetSetting(SETTING_TYPE_NAMEPLATES, NAMEPLATE_TYPE_GROUP_INDICATORS),
-    defaultFollowIndicator = GetSetting(SETTING_TYPE_NAMEPLATES, NAMEPLATE_TYPE_FOLLOWER_INDICATORS),
-    defaultAllianceIndicators = GetSetting(SETTING_TYPE_NAMEPLATES, NAMEPLATE_TYPE_ALLIANCE_INDICATORS),
-    defaultResurrectIndicator = GetSetting(SETTING_TYPE_NAMEPLATES, NAMEPLATE_TYPE_RESURRECT_INDICATORS),
-    defaultAllHealthBars = GetSetting(SETTING_TYPE_NAMEPLATES, NAMEPLATE_TYPE_ALL_HEALTHBARS),
-    defaultAllNamePlates = GetSetting(SETTING_TYPE_NAMEPLATES, NAMEPLATE_TYPE_ALL_NAMEPLATES),
-    defaultChatBubbles = GetSetting(SETTING_TYPE_CHAT_BUBBLE, CHAT_BUBBLE_SETTING_ENABLED),
-    defaultChatBubbleSpeed = GetSetting(SETTING_TYPE_CHAT_BUBBLE, CHAT_BUBBLE_SETTING_SPEED_MODIFIER),
-    defaultActionBar = GetSetting(SETTING_TYPE_UI, UI_SETTING_SHOW_ACTION_BAR),
-    defaultAttributeBar = GetSetting(SETTING_TYPE_UI, UI_SETTING_SHOW_RESOURCE_BARS),
-    defaultBuffs = GetSetting(SETTING_TYPE_BUFFS, BUFFS_SETTING_ALL_ENABLED),
-    defaultScrollingCombatText = GetSetting(SETTING_TYPE_COMBAT, COMBAT_SETTING_SCROLLING_COMBAT_TEXT_ENABLED),
-    defaultLootLog = GetSetting(SETTING_TYPE_LOOT, LOOT_SETTING_LOOT_HISTORY)
+IHH.defaults = {
+	isHidden = false,
+
+	-- Dynamic mode
+	dynamicMode = false,
+
+	hideCrosshair = 1,
+	hideChat = 2,
+
+	hideCompass = true,
+	hideActionBar = true,
+	hideBuffs = true,
+	hideAttributeBar = true,
+	hideLootLog = true,
+	hideQuestTracker = true,
+	hideTargetInfo = true,
+	hideGroupUnitFrames = true,
+	hideBossBar = true,
+	hideChatBubbles = true,
+	hideAllNamePlates = true,
+	hideAllHealthBars = false,
+
+	hideAUI = true,
+	hideMap = true,
+	hideBanditsUI = true,
+	hideBanditsCompanions = true,
+	hideSrendarr = true,
+	hideRavaloxTracker = true,
+	hideEventTracker = true,
+	hideFancyActionBar = true,
+	hideCombatMetrics = true,
 }
 
--- Return values to previous
-function ImmersiveHUDHider.setSettingsFromFile()
-    SetSetting(SETTING_TYPE_IN_WORLD, IN_WORLD_UI_SETTING_INTERACTABLE_GLOW_ENABLED, ImmersiveHUDHider.savedVariables.defaultInteractableGlow)
-    SetSetting(SETTING_TYPE_IN_WORLD, IN_WORLD_UI_SETTING_TARGET_GLOW_ENABLED, ImmersiveHUDHider.savedVariables.defaultTargetGlow)
-    SetSetting(SETTING_TYPE_UI, UI_SETTING_SHOW_QUEST_BESTOWER_INDICATORS, ImmersiveHUDHider.savedVariables.defaultQuestBestowerIndicator)
-    SetSetting(SETTING_TYPE_NAMEPLATES, NAMEPLATE_TYPE_GROUP_INDICATORS, ImmersiveHUDHider.savedVariables.defaultGroupIndicators)
-    SetSetting(SETTING_TYPE_NAMEPLATES, NAMEPLATE_TYPE_FOLLOWER_INDICATORS, ImmersiveHUDHider.savedVariables.defaultFollowIndicator)
-    SetSetting(SETTING_TYPE_NAMEPLATES, NAMEPLATE_TYPE_ALLIANCE_INDICATORS, ImmersiveHUDHider.savedVariables.defaultAllianceIndicators)
-    SetSetting(SETTING_TYPE_NAMEPLATES, NAMEPLATE_TYPE_RESURRECT_INDICATORS, ImmersiveHUDHider.savedVariables.defaultResurrectIndicator)
-    SetSetting(SETTING_TYPE_NAMEPLATES, NAMEPLATE_TYPE_ALL_HEALTHBARS, ImmersiveHUDHider.savedVariables.defaultAllHealthBars)
-    SetSetting(SETTING_TYPE_NAMEPLATES, NAMEPLATE_TYPE_ALL_NAMEPLATES, ImmersiveHUDHider.savedVariables.defaultAllNamePlates)
-    SetSetting(SETTING_TYPE_CHAT_BUBBLE, CHAT_BUBBLE_SETTING_ENABLED, ImmersiveHUDHider.savedVariables.defaultChatBubbles)
-    SetSetting(SETTING_TYPE_CHAT_BUBBLE, CHAT_BUBBLE_SETTING_SPEED_MODIFIER, ImmersiveHUDHider.savedVariables.defaultChatBubbleSpeed)
-    SetSetting(SETTING_TYPE_UI, UI_SETTING_SHOW_ACTION_BAR, ImmersiveHUDHider.savedVariables.defaultActionBar)
-    SetSetting(SETTING_TYPE_UI, UI_SETTING_SHOW_RESOURCE_BARS, ImmersiveHUDHider.savedVariables.defaultAttributeBar)
-    SetSetting(SETTING_TYPE_BUFFS, BUFFS_SETTING_ALL_ENABLED, ImmersiveHUDHider.savedVariables.defaultBuffs)
-    SetSetting(SETTING_TYPE_COMBAT, COMBAT_SETTING_SCROLLING_COMBAT_TEXT_ENABLED, ImmersiveHUDHider.savedVariables.defaultScrollingCombatText)
-    SetSetting(SETTING_TYPE_LOOT, LOOT_SETTING_LOOT_HISTORY, ImmersiveHUDHider.savedVariables.defaultLootLog)
+--------------------------------------------------
+-- DETECT
+--------------------------------------------------
+
+function IHH.Detect()
+	IHH.hasAUI = AUI ~= nil
+
+	IHH.hasBandits = BUI ~= nil
+	IHH.hasSrendarr = Srendarr ~= nil
+	IHH.hasRavalox = QUESTTRACKER ~= nil
+	IHH.hasEventTracker = EVT ~= nil
+	IHH.hasBanditsCompanions = BCUI ~= nil
+	IHH.hasFancyActionBar = FancyActionBar ~= nil
+
+	IHH.hasMap = AUI ~= nil or FyrMM ~= nil
+
+	IHH.hasCombatMetrics = CMX ~= nil
 end
 
--- Save default values to file
-function ImmersiveHUDHider.saveSettingsToFile()
-    if ImmersiveHUDHider.savedVariables.ImmersiveHUDHider_isUIHidden == false then
-        ImmersiveHUDHider.savedVariables.defaultInteractableGlow = GetSetting(SETTING_TYPE_IN_WORLD, IN_WORLD_UI_SETTING_INTERACTABLE_GLOW_ENABLED)
-        ImmersiveHUDHider.savedVariables.defaultTargetGlow = GetSetting(SETTING_TYPE_IN_WORLD, IN_WORLD_UI_SETTING_TARGET_GLOW_ENABLED)
-        ImmersiveHUDHider.savedVariables.defaultQuestBestowerIndicator = GetSetting(SETTING_TYPE_UI, UI_SETTING_SHOW_QUEST_BESTOWER_INDICATORS)
-        ImmersiveHUDHider.savedVariables.defaultGroupIndicators = GetSetting(SETTING_TYPE_NAMEPLATES, NAMEPLATE_TYPE_GROUP_INDICATORS)
-        ImmersiveHUDHider.savedVariables.defaultFollowIndicator = GetSetting(SETTING_TYPE_NAMEPLATES, NAMEPLATE_TYPE_FOLLOWER_INDICATORS)
-        ImmersiveHUDHider.savedVariables.defaultAllianceIndicators = GetSetting(SETTING_TYPE_NAMEPLATES, NAMEPLATE_TYPE_ALLIANCE_INDICATORS)
-        ImmersiveHUDHider.savedVariables.defaultResurrectIndicator = GetSetting(SETTING_TYPE_NAMEPLATES, NAMEPLATE_TYPE_RESURRECT_INDICATORS)
-        ImmersiveHUDHider.savedVariables.defaultAllHealthBars = GetSetting(SETTING_TYPE_NAMEPLATES, NAMEPLATE_TYPE_ALL_HEALTHBARS)
-        ImmersiveHUDHider.savedVariables.defaultAllNamePlates = GetSetting(SETTING_TYPE_NAMEPLATES, NAMEPLATE_TYPE_ALL_NAMEPLATES)
-        ImmersiveHUDHider.savedVariables.defaultChatBubbles = GetSetting(SETTING_TYPE_CHAT_BUBBLE, CHAT_BUBBLE_SETTING_ENABLED)
-        ImmersiveHUDHider.savedVariables.defaultChatBubbleSpeed = GetSetting(SETTING_TYPE_CHAT_BUBBLE, CHAT_BUBBLE_SETTING_SPEED_MODIFIER)
-        ImmersiveHUDHider.savedVariables.defaultActionBar = GetSetting(SETTING_TYPE_UI, UI_SETTING_SHOW_ACTION_BAR)
-        ImmersiveHUDHider.savedVariables.defaultAttributeBar = GetSetting(SETTING_TYPE_UI, UI_SETTING_SHOW_RESOURCE_BARS)
-        ImmersiveHUDHider.savedVariables.defaultBuffs = GetSetting(SETTING_TYPE_BUFFS, BUFFS_SETTING_ALL_ENABLED)
-        ImmersiveHUDHider.savedVariables.defaultScrollingCombatText = GetSetting(SETTING_TYPE_COMBAT, COMBAT_SETTING_SCROLLING_COMBAT_TEXT_ENABLED)
-        ImmersiveHUDHider.savedVariables.defaultLootLog = GetSetting(SETTING_TYPE_LOOT, LOOT_SETTING_LOOT_HISTORY)
-    end
+function hideAUIUnitFrames()
+	local gCurrentTemplateData = AUI.UnitFrames.GetActiveTemplates()
+	for _, templateData in pairs(gCurrentTemplateData) do
+		for frameType, data in pairs(templateData.frameData) do
+			control = data.control
+			for _, templateData in pairs(gCurrentTemplateData) do
+				for frameType, data in pairs(templateData.frameData) do
+					control = data.control
 
-    ImmersiveHUDHider.savedVariables.hideActionBar = ImmersiveHUDHider.savedVariables.hideActionBar
-    ImmersiveHUDHider.savedVariables.hideAllHealthBars = ImmersiveHUDHider.savedVariables.hideAllHealthBars
-    ImmersiveHUDHider.savedVariables.hideActionBar = ImmersiveHUDHider.savedVariables.hideActionBar
-    ImmersiveHUDHider.savedVariables.hideAllHealthBars = ImmersiveHUDHider.savedVariables.hideAllHealthBars
-    ImmersiveHUDHider.savedVariables.hideAllianceIndicators = ImmersiveHUDHider.savedVariables.hideAllianceIndicators
-    ImmersiveHUDHider.savedVariables.hideAllNamePlates = ImmersiveHUDHider.savedVariables.hideAllNamePlates
-    ImmersiveHUDHider.savedVariables.hideAttributeBar = ImmersiveHUDHider.savedVariables.hideAttributeBar
-    ImmersiveHUDHider.savedVariables.hideBossBar = ImmersiveHUDHider.savedVariables.hideBossBar
-    ImmersiveHUDHider.savedVariables.hideBuffs = ImmersiveHUDHider.savedVariables.hideBuffs
-    ImmersiveHUDHider.savedVariables.hideChatBubbles = ImmersiveHUDHider.savedVariables.hideChatBubbles
-    ImmersiveHUDHider.savedVariables.hideCompass = ImmersiveHUDHider.savedVariables.hideCompass
-    ImmersiveHUDHider.savedVariables.hideFollowIndicator = ImmersiveHUDHider.savedVariables.hideFollowIndicator
-    ImmersiveHUDHider.savedVariables.hideGroupIndicators = ImmersiveHUDHider.savedVariables.hideGroupIndicators
-    ImmersiveHUDHider.savedVariables.hideGroupUnitFrames = ImmersiveHUDHider.savedVariables.hideGroupUnitFrames
-    ImmersiveHUDHider.savedVariables.hideInteractableGlow = ImmersiveHUDHider.savedVariables.hideInteractableGlow
-    ImmersiveHUDHider.savedVariables.hideLootLog = ImmersiveHUDHider.savedVariables.hideLootLog
-    ImmersiveHUDHider.savedVariables.hideMap = ImmersiveHUDHider.savedVariables.hideMap
-    ImmersiveHUDHider.savedVariables.hideQuestBestowerIndicator = ImmersiveHUDHider.savedVariables.hideQuestBestowerIndicator
-    ImmersiveHUDHider.savedVariables.hideQuestTracker = ImmersiveHUDHider.savedVariables.hideQuestTracker
-    ImmersiveHUDHider.savedVariables.hideResurrectIndicator = ImmersiveHUDHider.savedVariables.hideResurrectIndicator
-    ImmersiveHUDHider.savedVariables.hideScrollingCombatText = ImmersiveHUDHider.savedVariables.hideScrollingCombatText
-    ImmersiveHUDHider.savedVariables.hideTargetGlow = ImmersiveHUDHider.savedVariables.hideTargetGlow
-    ImmersiveHUDHider.savedVariables.hideTargetInfo = ImmersiveHUDHider.savedVariables.hideTargetInfo
+					local timelastrun = 0
+					control:SetHandler("OnUpdate", function(self, timerun)
+						if (timerun - timelastrun) >= 0 then
+							timelastrun = timerun
+							for k, v in pairs(AUIUnitFramesToHide) do
+								AUI.UnitFrames.HideFrame(v)
+							end
+						end
+					end)
+
+					break
+				end
+			end
+			break
+		end
+	end
 end
 
-function ImmersiveHUDHider.interfaceEventHandlerToggle()
-    if ImmersiveHUDHider.savedVariables.isInterfaceEventHandler == 1 then
-        EVENT_MANAGER:UnregisterForEvent(ImmersiveHUDHider.name, EVENT_INTERFACE_SETTING_CHANGED)
-    else
-        EVENT_MANAGER:RegisterForEvent(ImmersiveHUDHider.name, EVENT_INTERFACE_SETTING_CHANGED, ImmersiveHUDHider.saveSettingsToFile)
-    end
+function hideTargetInfo(hidden)
+	if hidden == true then
+		-- Default target frame
+		EVENT_MANAGER:RegisterForEvent("toggleTargetInfo", EVENT_RETICLE_TARGET_CHANGED, function()
+			if ZO_TargetUnitFramereticleover then
+				SafeSet(ZO_TargetUnitFramereticleover, hidden, nil, true)
+			end
+		end)
+
+		-- AUI target frame
+		if IHH.hasAUI then
+			if AUI.UnitFrames.Target.IsEnabled() then
+				table.insert(AUIUnitFramesToHide, 201)
+				table.insert(AUIUnitFramesToHide, 202)
+				table.insert(AUIUnitFramesToHide, 211)
+				table.insert(AUIUnitFramesToHide, 212)
+				hideAUIUnitFrames()
+			end
+		end
+	else
+		-- Reset main target hud
+		EVENT_MANAGER:UnregisterForEvent("toggleTargetInfo", EVENT_RETICLE_TARGET_CHANGED, function()
+			if ZO_TargetUnitFramereticleover then
+				SafeSet(ZO_TargetUnitFramereticleover, hidden, nil, true)
+			end
+		end)
+
+		-- Reset AUI target hud
+		if IHH.hasAUI then
+			if AUI.UnitFrames.Target.IsEnabled() then
+				AUIUnitFramesToHide = {}
+				hideAUIUnitFrames()
+				AUI.UnitFrames.UpdateUI()
+			end
+		end
+	end
 end
 
-function hideInteractableGlow(boolean)
-    if (ImmersiveHUDHider.savedVariables.hideInteractableGlow) then
-        if (boolean) then
-            SetSetting(SETTING_TYPE_IN_WORLD, IN_WORLD_UI_SETTING_INTERACTABLE_GLOW_ENABLED, "false", DO_NOT_SAVE_TO_PERSISTED_DATA)
-        else
-            SetSetting(
-                SETTING_TYPE_IN_WORLD, IN_WORLD_UI_SETTING_INTERACTABLE_GLOW_ENABLED, ImmersiveHUDHider.savedVariables.defaultInteractableGlow,
-                DO_NOT_SAVE_TO_PERSISTED_DATA
-            )
-        end
-    end
+--------------------------------------------------
+-- BANDITS
+--------------------------------------------------
+
+function IHH.ApplyBandits(hidden)
+	if not (IHH.saved.hideBanditsUI and IHH.hasBandits) then
+		return
+	end
+
+	local frames = {
+		"BUI_PlayerFrame",
+		"BUI_TargetFrame",
+		"BUI_CompanionFrame",
+	}
+
+	for _, name in ipairs(frames) do
+		SafeSet(_G[name], hidden)
+	end
+
+	if BUI.Vars.DefaultTargetFrame then
+		SafeSet(ZO_TargetUnitFramereticleover, hidden)
+	end
 end
 
-function hideTargetGlow(boolean)
-    if (ImmersiveHUDHider.savedVariables.hideTargetGlow) then
-        if (boolean) then
-            SetSetting(SETTING_TYPE_IN_WORLD, IN_WORLD_UI_SETTING_TARGET_GLOW_ENABLED, "false", DO_NOT_SAVE_TO_PERSISTED_DATA)
-        else
-            SetSetting(
-                SETTING_TYPE_IN_WORLD, IN_WORLD_UI_SETTING_TARGET_GLOW_ENABLED, ImmersiveHUDHider.savedVariables.defaultTargetGlow,
-                DO_NOT_SAVE_TO_PERSISTED_DATA
-            )
-        end
-    end
+function IHH.ApplyBanditsCompanions(hidden)
+	if not (IHH.saved.hideBanditsCompanions and IHH.hasBanditsCompanions) then
+		return
+	end
+
+	if BCUI_CompanionFrame then
+		SafeSet(BCUI_CompanionFrame, hidden, nil, true)
+	end
 end
 
-function hideQuestBestowerIdicator(boolean)
-    if (ImmersiveHUDHider.savedVariables.hideQuestBestowerIndicator) then
-        if (boolean) then
-            SetSetting(SETTING_TYPE_UI, UI_SETTING_SHOW_QUEST_BESTOWER_INDICATORS, "false", DO_NOT_SAVE_TO_PERSISTED_DATA)
-        else
-            SetSetting(
-                SETTING_TYPE_UI, UI_SETTING_SHOW_QUEST_BESTOWER_INDICATORS, ImmersiveHUDHider.savedVariables.defaultQuestBestowerIndicator,
-                DO_NOT_SAVE_TO_PERSISTED_DATA
-            )
-        end
-    end
+function IHH.ApplySrendarr(hidden)
+	if not (IHH.saved.hideSrendarr and IHH.hasSrendarr) then
+		return
+	end
+
+	for i = 1, Srendarr.NUM_DISPLAY_FRAMES do
+		if Srendarr.displayFrames[i] ~= nil then
+			SafeSet(Srendarr.displayFrames[i], hidden)
+		end
+	end
 end
 
-function hideGroupIndicators(boolean)
-    if (ImmersiveHUDHider.savedVariables.hideGroupIndicators) then
-        if (boolean) then
-            SetSetting(SETTING_TYPE_NAMEPLATES, NAMEPLATE_TYPE_GROUP_INDICATORS, "false", DO_NOT_SAVE_TO_PERSISTED_DATA)
-        else
-            SetSetting(
-                SETTING_TYPE_NAMEPLATES, NAMEPLATE_TYPE_GROUP_INDICATORS, ImmersiveHUDHider.savedVariables.defaultGroupIndicators,
-                DO_NOT_SAVE_TO_PERSISTED_DATA
-            )
-        end
+function IHH.ApplyRavalox(hidden)
+	if not (IHH.saved.hideRavaloxTracker and IHH.hasRavalox) then
+		return
+	end
 
-    end
+	if QUESTTRACKER then
+		SafeSet(QUESTTRACKER.questTreeWin, hidden)
+	end
+
+	if RavaloxQuestTrackerPanel then
+		SafeSet(RavaloxQuestTrackerPanel, hidden)
+	end
 end
 
-function hideFollowIndicator(boolean)
-    if (ImmersiveHUDHider.savedVariables.hideFollowIndicator) then
-        if (boolean) then
-            SetSetting(SETTING_TYPE_NAMEPLATES, NAMEPLATE_TYPE_FOLLOWER_INDICATORS, "false", DO_NOT_SAVE_TO_PERSISTED_DATA)
-        else
-            SetSetting(
-                SETTING_TYPE_NAMEPLATES, NAMEPLATE_TYPE_FOLLOWER_INDICATORS, ImmersiveHUDHider.savedVariables.defaultFollowIndicator,
-                DO_NOT_SAVE_TO_PERSISTED_DATA
-            )
-        end
-    end
+function IHH.ApplyEventTracker(hidden)
+	if not (IHH.saved.hideEventTracker and IHH.hasEventTracker) then
+		return
+	end
+
+	if ZO_EventTracker then
+		SafeSet(ZO_EventTracker, hidden)
+	end
+
+	EVT_HIDE_UI = hidden
+
+	if EVT_HIDE_UI then
+		EVT.HideUI("Hide")
+		EVENT_MANAGER:UnregisterForEvent(EVT.name, EVENT_PLAYER_COMBAT_STATE)
+	end
 end
 
-function hideAllianceIndicators(boolean)
-    if (ImmersiveHUDHider.savedVariables.hideAllianceIndicators) then
-        if (boolean) then
-            SetSetting(SETTING_TYPE_NAMEPLATES, NAMEPLATE_TYPE_ALLIANCE_INDICATORS, NAMEPLATE_CHOICE_NEVER, DO_NOT_SAVE_TO_PERSISTED_DATA)
-        else
-            SetSetting(
-                SETTING_TYPE_NAMEPLATES, NAMEPLATE_TYPE_ALLIANCE_INDICATORS, ImmersiveHUDHider.savedVariables.defaultAllianceIndicators,
-                DO_NOT_SAVE_TO_PERSISTED_DATA
-            )
-        end
-    end
+function IHH.ApplyFancyActionBar(hidden)
+	if not (IHH.saved.hideFancyActionBar and IHH.hasFancyActionBar) then
+		return
+	end
+
+	local NAME = "FancyActionBar+"
+
+	if hidden then
+		FancyActionBar.UpdateScale(0)
+	else
+		FancyActionBar.UpdateScale(1)
+	end
 end
 
-function hideResurrectIndicator(boolean)
-    if (ImmersiveHUDHider.savedVariables.hideResurrectIndicator) then
-        if (boolean) then
-            SetSetting(SETTING_TYPE_NAMEPLATES, NAMEPLATE_TYPE_RESURRECT_INDICATORS, "false", DO_NOT_SAVE_TO_PERSISTED_DATA)
-        else
-            SetSetting(
-                SETTING_TYPE_NAMEPLATES, NAMEPLATE_TYPE_RESURRECT_INDICATORS, ImmersiveHUDHider.savedVariables.defaultResurrectIndicator,
-                DO_NOT_SAVE_TO_PERSISTED_DATA
-            )
-        end
-    end
+function hideChat(hidden)
+	-- Hide only background
+	if IHH.saved.hideChat == hideChatChoices[2] then
+		SafeSet(ZO_ChatWindowBg, hidden, nil, true)
+		SafeSet(ZO_ChatWindowMinBarBG, hidden, nil, true)
+
+		-- Fully hide chat
+	elseif IHH.saved.hideChat == hideChatChoices[3] then
+		SafeSet(ZO_ChatWindowBg, hidden, nil, true)
+		SafeSet(ZO_ChatWindowMinBarBG, hidden, nil, true)
+		SafeSet(ZO_ChatWindowNotifications, hidden, nil, true)
+		SafeSet(ZO_ChatWindowDivider, hidden, nil, true)
+		SafeSet(ZO_ChatWindow, hidden, nil, true)
+	end
+
+	if not hidden then
+		CHAT_SYSTEM:SetChannel(CHAT_SYSTEM.currentChannel) -- re-apply channel to fix not being able to type until switching channels
+	end
 end
 
-function hideAllNamePlates(boolean)
-    if (ImmersiveHUDHider.savedVariables.hideAllNamePlates) then
-        if (boolean) then
-            SetSetting(SETTING_TYPE_NAMEPLATES, NAMEPLATE_TYPE_ALL_NAMEPLATES, "false", DO_NOT_SAVE_TO_PERSISTED_DATA)
-        else
-            SetSetting(
-                SETTING_TYPE_NAMEPLATES, NAMEPLATE_TYPE_ALL_NAMEPLATES, ImmersiveHUDHider.savedVariables.defaultAllNamePlates,
-                DO_NOT_SAVE_TO_PERSISTED_DATA
-            )
-        end
-    end
+function IHH.hideCrosshair()
+	if IHH.saved.hideCrosshair == hideCrosshairChoices[2] then
+		-- Show only in combat
+		if IsUnitInCombat("player") then
+			--ZO_ReticleContainerReticle:SetHidden(false)
+			SafeSet(ZO_ReticleContainerReticle, false)
+		else
+			--ZO_ReticleContainerReticle:SetHidden(true)
+			SafeSet(ZO_ReticleContainerReticle, true)
+		end
+	elseif IHH.saved.hideCrosshair == hideCrosshairChoices[3] then
+		-- Always Hide
+		ZO_ReticleContainerReticle:SetHidden(true)
+	end
 end
 
-function hideChatBubbles(boolean)
-    if (ImmersiveHUDHider.savedVariables.hideChatBubbles) then
-        if (boolean) then
-            SetSetting(SETTING_TYPE_CHAT_BUBBLE, CHAT_BUBBLE_SETTING_ENABLED, "false", DO_NOT_SAVE_TO_PERSISTED_DATA)
-            SetSetting(SETTING_TYPE_CHAT_BUBBLE, CHAT_BUBBLE_SETTING_SPEED_MODIFIER, "0.80000001")
-        else
-            SetSetting(
-                SETTING_TYPE_CHAT_BUBBLE, CHAT_BUBBLE_SETTING_ENABLED, ImmersiveHUDHider.savedVariables.defaultChatBubbles,
-                DO_NOT_SAVE_TO_PERSISTED_DATA
-            )
-            SetSetting(SETTING_TYPE_CHAT_BUBBLE, CHAT_BUBBLE_SETTING_SPEED_MODIFIER, ImmersiveHUDHider.savedVariables.defaultChatBubbleSpeed)
-        end
-
-    end
+function IHH.hideMinimap(hidden)
+	if IHH.saved.hideMap then
+		if hidden == true then
+			if AUI then
+				if AUI.Minimap.IsEnabled() then
+					AUI.Minimap.Hide()
+					AUI.Settings.Minimap.hidden = true
+				end
+			end
+			if FyrMM then
+				FyrMM.Visible = false
+				FyrMM.AutoHidden = true
+			end
+			SafeSet(ZO_WorldMap, hidden)
+		else
+			if AUI then
+				if AUI.Minimap.IsEnabled() then
+					AUI.Minimap.Show()
+					AUI.Settings.Minimap.hidden = false
+				end
+			end
+			if FyrMM then
+				FyrMM.Visible = true
+				FyrMM.AutoHidden = false
+			end
+			SafeSet(ZO_WorldMap, hidden)
+		end
+	end
 end
 
-function hideActionBar(boolean)
-    if (ImmersiveHUDHider.savedVariables.hideActionBar) then
-        if (boolean) then
-            SetSetting(SETTING_TYPE_UI, UI_SETTING_SHOW_ACTION_BAR, "false", DO_NOT_SAVE_TO_PERSISTED_DATA)
-        else
-            SetSetting(SETTING_TYPE_UI, UI_SETTING_SHOW_ACTION_BAR, ImmersiveHUDHider.savedVariables.defaultActionBar, DO_NOT_SAVE_TO_PERSISTED_DATA)
-        end
-    end
+function IHH.hideAUIBuffs(hidden)
+	if not IHH.hasAUI then
+		return
+	end
+
+	if AUI.Buffs.IsEnabled() then
+		AUI_Buff:SetHidden(hidden)
+		AUI.Buffs.RefreshAll()
+	end
 end
 
-function hideBuffs(boolean)
-    if (ImmersiveHUDHider.savedVariables.hideBuffs == true) then
-        if (boolean) then
-            -- Vanilla
-            SetSetting(SETTING_TYPE_BUFFS, BUFFS_SETTING_ALL_ENABLED, "false", DO_NOT_SAVE_TO_PERSISTED_DATA)
+function IHH.hideAUIGroupUnitFrames(hidden)
+	if not IHH.hasAUI then
+		return
+	end
 
-            -- AUI
-            if (AUI) then
-                if (AUI.Buffs.IsEnabled()) then
-                    
-                    -- unitTag = AUI_TARGET_UNIT_TAG
-                    -- effectType = BUFF_EFFECT_TYPE_DEBUFF
-                    local _unitTag = "player"
-                    local _effectType = BUFF_EFFECT_TYPE_BUFF
-                    local activeBuffs = {}
-                    if not activeBuffs[_unitTag] then
-                        activeBuffs[_unitTag] = {}
-                    end
-                    
-                    if not activeBuffs[_unitTag][_effectType] then
-                        activeBuffs[_unitTag][_effectType] = {}
-                    end	
+	-- AUI
+	if hidden then
+		if AUI.UnitFrames.Group.IsEnabled() then
+			local gCurrentTemplateData = AUI.UnitFrames.GetActiveTemplates()
+			for _, templateData in pairs(gCurrentTemplateData) do
+				for frameType, data in pairs(templateData.frameData) do
+					control = data.control
+					for _, templateData in pairs(gCurrentTemplateData) do
+						for frameType, data in pairs(templateData.frameData) do
+							control = data.control
 
-                    for unitTag, unitData in pairs(activeBuffs) do
-                        for effectType, buffControls in pairs(unitData) do	
-                            for _, control in pairs(buffControls) do
-                                RemoveBuff(control.buffData.AbilityId	, unitTag, effectType, false)
-                                control:SetHidden(true)
-                            end
-                        end
-                    end
+							if
+								AUI.UnitFrames.IsGroupOrRaid(control.attributeId)
+								or AUI.UnitFrames.IsMainCompanion(control.attributeId)
+							then
+								table.insert(AUIUnitFramesToHide, 301)
+								table.insert(AUIUnitFramesToHide, 302)
+								table.insert(AUIUnitFramesToHide, 303)
+								hideAUIUnitFrames()
+							end
 
-                end
-            end
-        else
-            SetSetting(SETTING_TYPE_BUFFS, BUFFS_SETTING_ALL_ENABLED, ImmersiveHUDHider.savedVariables.defaultBuffs, DO_NOT_SAVE_TO_PERSISTED_DATA)
-        end
-    end
+							break
+						end
+					end
+					break
+				end
+			end
+		end
+	else
+		if AUI.UnitFrames.Group.IsEnabled() then
+			ZO_UnitFramesGroups:SetHidden(true)
+			AUIUnitFramesToHide = {}
+			hideAUIUnitFrames()
+		end
+	end
 end
 
-function hideScrollingCombatText(boolean)
-    if (ImmersiveHUDHider.savedVariables.hideScrollingCombatText == true) then
-        if (boolean) then
-            SetSetting(SETTING_TYPE_COMBAT, COMBAT_SETTING_SCROLLING_COMBAT_TEXT_ENABLED, "false", DO_NOT_SAVE_TO_PERSISTED_DATA)
-        else
-            SetSetting(
-                SETTING_TYPE_COMBAT, COMBAT_SETTING_SCROLLING_COMBAT_TEXT_ENABLED, ImmersiveHUDHider.savedVariables.defaultScrollingCombatText,
-                DO_NOT_SAVE_TO_PERSISTED_DATA
-            )
-        end
-    end
+function IHH.hideAUIAttributeBars(hidden)
+	if not IHH.hasAUI then
+		return
+	end
+
+	if hidden then
+		if AUI.UnitFrames.Player.IsEnabled() then
+			local gCurrentTemplateData = AUI.UnitFrames.GetActiveTemplates()
+			for _, templateData in pairs(gCurrentTemplateData) do
+				for frameType, data in pairs(templateData.frameData) do
+					control = data.control
+					for _, templateData in pairs(gCurrentTemplateData) do
+						for frameType, data in pairs(templateData.frameData) do
+							control = data.control
+
+							if AUI.UnitFrames.IsPlayer(control.attributeId) then
+								table.insert(AUIUnitFramesToHide, 101)
+								table.insert(AUIUnitFramesToHide, 102)
+								table.insert(AUIUnitFramesToHide, 103)
+								hideAUIUnitFrames()
+							end
+
+							break
+						end
+					end
+					break
+				end
+			end
+		end
+	else
+		if AUI.UnitFrames.Player.IsEnabled() then
+			AUIUnitFramesToHide = {}
+			hideAUIUnitFrames()
+			AUI.UnitFrames.UpdateUI()
+		end
+	end
 end
 
-function hideLootLog(boolean)
-    if (ImmersiveHUDHider.savedVariables.hideLootLog == true) then
-        if (boolean) then
-            SetSetting(SETTING_TYPE_LOOT, LOOT_SETTING_LOOT_HISTORY, "false", DO_NOT_SAVE_TO_PERSISTED_DATA)
-        else
-            SetSetting(SETTING_TYPE_LOOT, LOOT_SETTING_LOOT_HISTORY, ImmersiveHUDHider.savedVariables.defaultLootLog, DO_NOT_SAVE_TO_PERSISTED_DATA)
-        end
-    end
+function IHH.hideCombatMetrics(hidden)
+	if not IHH.hasCombatMetrics then
+		return
+	end
+
+	SafeSet(CombatMetrics_LiveReport, hidden)
 end
 
-function hideCompass(boolean)
-    if (ImmersiveHUDHider.savedVariables.hideCompass) then
-        if (boolean == true) then
-            ZO_Compass:SetHidden(true)
-            ZO_Compass:SetAlpha(0)
-            ZO_CompassFrameCenter:SetHidden(true)
-            ZO_CompassFrameLeft:SetHidden(true)
-            ZO_CompassFrameRight:SetHidden(true)
+--------------------------------------------------
+-- CORE APPLY
+--------------------------------------------------
 
-            -- Hide compass after it has been updated
-            -- Prevents ghosting after opening menu
-            local timelastrun = 0
-            ZO_CompassFrame:SetHandler(
-                "OnUpdate", function(self, timerun)
-                    if (timerun - timelastrun) >= 0 then
-                        timelastrun = timerun
-                        ZO_Compass:SetHidden(true)
-                    end
-                end
-            )
-        else
-            ZO_Compass:SetHidden(false)
-            ZO_Compass:SetAlpha(100)
-            ZO_CompassFrameCenter:SetHidden(false)
-            ZO_CompassFrameLeft:SetHidden(false)
-            ZO_CompassFrameRight:SetHidden(false)
+function IHH.ApplyCore(hidden)
+	IHH.active = hidden
 
-            -- Hide compass after it has been updated
-            -- Prevents ghosting after opening menu
-            local timelastrun = 0
-            ZO_CompassFrame:SetHandler(
-                "OnUpdate", function(self, timerun)
-                    if (timerun - timelastrun) >= 0 then
-                        timelastrun = timerun
-                        ZO_Compass:SetHidden(false)
-                    end
-                end
-            )
-        end
-    end
+	-- Compass
+	if IHH.saved.hideCompass then
+		SafeSet(ZO_CompassFrame, hidden)
+		SafeSet(ZO_CompassContainer, hidden)
+		SafeSet(ZO_CompassFrameBG, hidden)
+	end
+
+	-- Action bar
+	if IHH.saved.hideActionBar then
+		SafeSet(ZO_ActionBar1, hidden)
+
+		IHH.ApplyFancyActionBar(hidden)
+	end
+
+	-- Buffs
+	if IHH.saved.hideBuffs then
+		SafeSet(ZO_BuffDebuffTopLevelSelfContainer, hidden)
+
+		if IHH.hasAUI then
+			IHH.hideAUIBuffs(hidden)
+		end
+	end
+
+	-- Attributes
+	if IHH.saved.hideAttributeBar then
+		SafeSet(ZO_PlayerAttribute, hidden)
+
+		-- AUI
+		if IHH.hasAUI then
+			IHH.hideAUIAttributeBars(hidden)
+		end
+
+		-- bandits
+		IHH.ApplyBandits(hidden)
+	end
+
+	-- Nameplates
+	if IHH.saved.hideAllNamePlates then
+	end
+
+	if IHH.saved.hideAllHealthBars then
+	end
+
+	-- Chat bubbles
+	if IHH.saved.hideChatBubbles then
+	end
+
+	-- Loot log
+	if IHH.saved.hideLootLog then
+		SafeSet(LootDropGui, hidden)
+	end
+
+	-- Quest tracker
+	if IHH.saved.hideQuestTracker then
+		SafeSet(ZO_FocusedQuestTrackerPanel, hidden)
+
+		-- AUI
+		if IHH.hasAUI then
+			if AUI_Questtracker then
+				SafeSet(AUI_Questtracker, hidden)
+			end
+		end
+	end
+
+	-- Target + group
+	if IHH.saved.hideTargetInfo then
+		hideTargetInfo(hidden)
+	end
+
+	if IHH.saved.hideGroupUnitFrames then
+		SafeSet(ZO_UnitFramesGroups, hidden)
+
+		-- AUI
+		if IHH.hasAUI then
+			IHH.hideAUIGroupUnitFrames(hidden)
+		end
+
+		-- bandits
+		IHH.ApplyBanditsCompanions(hidden)
+	end
+
+	-- Boss bar
+	if IHH.saved.hideBossBar then
+		SafeSet(ZO_BossBar, hidden)
+	end
+
+	-- chat
+	if IHH.saved.hideChat then
+		hideChat(hidden)
+	end
+
+	-- Addons
+	IHH.hideMinimap(hidden)
+	IHH.ApplySrendarr(hidden)
+	IHH.ApplyRavalox(hidden)
+	IHH.ApplyEventTracker(hidden)
+	if IHH.saved.hideCombatMetrics then
+		IHH.hideCombatMetrics(hidden)
+	end
 end
 
-function hideMinimap(boolean)
-    if (ImmersiveHUDHider.savedVariables.hideMap) then
-        if (boolean == true) then
-            if (AUI) then
+--------------------------------------------------
+-- DYNAMIC MODE (AUTO HIDE)
+--------------------------------------------------
 
-                if (AUI.Minimap.IsEnabled()) then
-                    AUI.Minimap.Hide()
-                    AUI.Settings.Minimap.hidden = true
-                end
-            end
-            if (FyrMM) then
-                FyrMM.Visible = false
-                FyrMM.AutoHidden = true
-            end
-            ZO_WorldMap:SetAlpha(0)
-        else
-            if (AUI) then
-                if (AUI.Minimap.IsEnabled()) then
-                    AUI.Minimap.Show()
-                    AUI.Settings.Minimap.hidden = false
-                end
-            end
-            if (FyrMM) then
-                FyrMM.Visible = true
-                FyrMM.AutoHidden = false
-            end
-            ZO_WorldMap:SetAlpha(100)
-        end
-    end
+function IHH.UpdateDynamic(_, inCombat)
+	if not IHH.saved.dynamicMode then
+		return
+	end
+
+	if inCombat then
+		IHH.ApplyCore(false) -- show in combat
+	else
+		IHH.ApplyCore(true) -- hide out of combat
+	end
 end
 
-function hideQuestTracker(boolean)
-    if (ImmersiveHUDHider.savedVariables.hideQuestTracker) then
-        -- AUI
-        if (AUI_Questtracker) then
-            if (boolean) then
-                AUI_Questtracker:SetAlpha(0)
-            else
-                AUI_Questtracker:SetAlpha(100)
-            end
-        end
+--------------------------------------------------
+-- TOGGLE
+--------------------------------------------------
 
-        -- Ravlox' Quest Tracker
-        if (QUESTTRACKER) then
-            if (boolean) then
-                QUESTTRACKER.svCurrent.mainWindow.hideQuestWindow = true
-                QUESTTRACKER.WINDOW_FRAGMENT:SetHiddenForReason("QuestTracker_UserSetting_Hidden", true)
-            else
-                QUESTTRACKER.svCurrent.mainWindow.hideQuestWindow = false
-                QUESTTRACKER.WINDOW_FRAGMENT:SetHiddenForReason("QuestTracker_UserSetting_Hidden", false)
-            end
-        end
-    end
+function IHH.StartEnforcer()
+	EVENT_MANAGER:RegisterForUpdate(IHH.name .. "_enforce", 50, IHH.Enforce)
 end
 
-function hideTargetInfo(boolean)
-    if (ImmersiveHUDHider.savedVariables.hideTargetInfo) then
-        if (boolean == true) then
-            -- Default target frame
-            EVENT_MANAGER:RegisterForEvent(
-                "toggleTargetInfo", EVENT_RETICLE_TARGET_CHANGED, function()
-                    if ZO_TargetUnitFramereticleover then
-                        ZO_TargetUnitFramereticleover:SetHidden(true)
-                    end
-                end
-            )
-            -- AUI target frame
-            if (AUI) then
-                if (AUI.UnitFrames.Target.IsEnabled()) then
-                    table.insert(AUIUnitFramesToHide, 201)
-                    table.insert(AUIUnitFramesToHide, 202)
-                    table.insert(AUIUnitFramesToHide, 211)
-                    table.insert(AUIUnitFramesToHide, 212)
-                    hideAUIUnitFrames()
-                end
-            end
-        else
-            -- Reset main target hud
-            EVENT_MANAGER:UnregisterForEvent(
-                "toggleTargetInfo", EVENT_RETICLE_TARGET_CHANGED, function()
-                    if ZO_TargetUnitFramereticleover then
-                        ZO_TargetUnitFramereticleover:SetHidden(false)
-                    end
-                end
-            )
-
-            -- Reset AUI target hud
-            if (AUI) then
-                if (AUI.UnitFrames.Target.IsEnabled()) then
-                    AUIUnitFramesToHide = {}
-                    hideAUIUnitFrames()
-                end
-            end
-        end
-    end
+function IHH.StopEnforcer()
+	EVENT_MANAGER:UnregisterForUpdate(IHH.name .. "_enforce")
 end
 
-function hideBossBar(boolean)
-    if (ImmersiveHUDHider.savedVariables.hideBossBar) then
-        if (boolean == true) then
-            ZO_BossBar:SetAlpha(0)
-        else
-            ZO_BossBar:SetAlpha(100)
-        end
-    end
+function IHH.Enforce()
+	if not IHH.active then
+		return
+	end
+
+	IHH.ApplyCore(true)
 end
 
-function hideAttributeBars(boolean)
-    if (ImmersiveHUDHider.savedVariables.hideAttributeBar) then
-        if (boolean == true) then
-            -- Vanilla
-            SetSetting(SETTING_TYPE_UI, UI_SETTING_SHOW_RESOURCE_BARS, "false", DO_NOT_SAVE_TO_PERSISTED_DATA)
+function IHH.Toggle()
+	local newState = not IHH.saved.isHidden
+	IHH.saved.isHidden = newState
 
-            -- AUI
-            if (AUI) then
-                if (AUI.UnitFrames.Player.IsEnabled()) then
-                    local gCurrentTemplateData = AUI.UnitFrames.GetActiveTemplates()
-                    for _, templateData in pairs(gCurrentTemplateData) do
-                        for frameType, data in pairs(templateData.frameData) do
-                            control = data.control
-                            for _, templateData in pairs(gCurrentTemplateData) do
-                                for frameType, data in pairs(templateData.frameData) do
-                                    control = data.control
+	if newState then
+		IHH.StartEnforcer()
+	else
+		IHH.StopEnforcer()
+	end
 
-                                    if (AUI.UnitFrames.IsPlayer(control.attributeId)) then
-                                        table.insert(AUIUnitFramesToHide, 101)
-                                        table.insert(AUIUnitFramesToHide, 102)
-                                        table.insert(AUIUnitFramesToHide, 103)
-                                        hideAUIUnitFrames()
-                                    end
-
-                                    break
-                                end
-                            end
-                            break
-                        end
-                    end
-                end
-            end
-
-        else
-            -- Vanilla
-            SetSetting(
-                SETTING_TYPE_UI, UI_SETTING_SHOW_RESOURCE_BARS, ImmersiveHUDHider.savedVariables.defaultAttributeBar, DO_NOT_SAVE_TO_PERSISTED_DATA
-            )
-
-            -- AUI
-            if (AUI) then
-                if (AUI.UnitFrames.Player.IsEnabled()) then
-                    AUIUnitFramesToHide = {}
-                    hideAUIUnitFrames()
-                end
-            end
-        end
-    end
+	IHH.ApplyCore(newState)
 end
 
-function hideFloatingMarkers(boolean)
-    if (ImmersiveHUDHider.savedVariables.hideQuestBestowerIndicator) then
-        if (boolean == true) then
-            SetFloatingMarkerGlobalAlpha(0)
-        else
-            SetFloatingMarkerGlobalAlpha(100)
-        end
-    end
+--------------------------------------------------
+-- MENU
+--------------------------------------------------
+
+local DONATION_URL = "https://www.esoui.com/downloads/fileinfo.php?id=3628#donate"
+local function Donate()
+	RequestOpenUnsafeURL(DONATION_URL)
 end
 
-function hideGroupFrames(boolean)
-    if (ImmersiveHUDHider.savedVariables.hideGroupUnitFrames) then
-        if (boolean) then
-            -- Vanilla
-            ZO_UnitFramesGroups:SetHidden(true)
+function IHH.BuildMenu()
+	local LAM = LibAddonMenu2
 
-            -- AUI
-            if (AUI) then
-                if (AUI.UnitFrames.Group.IsEnabled()) then
-                    local gCurrentTemplateData = AUI.UnitFrames.GetActiveTemplates()
-                    for _, templateData in pairs(gCurrentTemplateData) do
-                        for frameType, data in pairs(templateData.frameData) do
-                            control = data.control
-                            for _, templateData in pairs(gCurrentTemplateData) do
-                                for frameType, data in pairs(templateData.frameData) do
-                                    control = data.control
+	local panel = {
+		type = "panel",
+		name = "Immersive HUD Hider",
+		author = "Alfthebigheaded",
+		version = IHH.version,
+		website = "https://www.esoui.com/downloads/fileinfo.php?id=3628",
+		feedback = "https://www.esoui.com/downloads/addcomment.php?action=addcomment&fileid=3628",
+		donation = DONATION_URL,
+	}
 
-                                    if (AUI.UnitFrames.IsPlayer(control.attributeId)) then
-                                        table.insert(AUIUnitFramesToHide, 301)
-                                        table.insert(AUIUnitFramesToHide, 302)
-                                        table.insert(AUIUnitFramesToHide, 303)
-                                        hideAUIUnitFrames()
-                                    end
+	LAM:RegisterAddonPanel("IHHPanel", panel)
 
-                                    break
-                                end
-                            end
-                            break
-                        end
-                    end
-                end
-            end
-        else
-            -- Vanilla
-            ZO_UnitFramesGroups:SetHidden(false)
+	local options = {
 
-            -- AUI
-            if (AUI) then
-                if (AUI.UnitFrames.Group.IsEnabled()) then
-                    ZO_UnitFramesGroups:SetHidden(true)
-                    AUIUnitFramesToHide = {}
-                    hideAUIUnitFrames()
-                end
-            end
-        end
-    end
+		{
+			type = "description",
+			text = "Choose which elements of the HUD you would like hidden on toggle.",
+		},
+		{ type = "header", name = "Choose Which Elements To Hide" },
 
+		{
+			type = "checkbox",
+			name = "Dynamic Combat Mode",
+			tooltip = "Automatically hide HUD out of combat, and re-enable if you enter combat.",
+			getFunc = function()
+				return IHH.saved.dynamicMode
+			end,
+			setFunc = function(v)
+				IHH.saved.dynamicMode = v
+			end,
+		},
+		{
+			type = "dropdown",
+			name = "Hide Crosshair",
+			tooltip = "Choose an option to hide crosshair. These options apply always, no matter whether the immersive hud hider toggle is enabled or disabled.",
+			choices = hideCrosshairChoices,
+			getFunc = function()
+				return IHH.saved.hideCrosshair
+			end,
+			setFunc = function(newValue)
+				IHH.saved.hideCrosshair = newValue
+			end,
+		},
+
+		{
+			type = "checkbox",
+			name = "Hide Compass",
+			getFunc = function()
+				return IHH.saved.hideCompass
+			end,
+			setFunc = function(v)
+				IHH.saved.hideCompass = v
+			end,
+		},
+
+		{
+			type = "checkbox",
+			name = "Hide Action Bar",
+			getFunc = function()
+				return IHH.saved.hideActionBar
+			end,
+			setFunc = function(v)
+				IHH.saved.hideActionBar = v
+			end,
+		},
+
+		{
+			type = "checkbox",
+			name = "Hide Buffs",
+			getFunc = function()
+				return IHH.saved.hideBuffs
+			end,
+			setFunc = function(v)
+				IHH.saved.hideBuffs = v
+			end,
+		},
+
+		{
+			type = "checkbox",
+			name = "Hide Target Info",
+			getFunc = function()
+				return IHH.saved.hideTargetInfo
+			end,
+			setFunc = function(v)
+				IHH.saved.hideTargetInfo = v
+			end,
+		},
+
+		{
+			type = "checkbox",
+			name = "Hide Quest Tracker",
+			getFunc = function()
+				return IHH.saved.hideQuestTracker
+			end,
+			setFunc = function(v)
+				IHH.saved.hideQuestTracker = v
+			end,
+		},
+
+		{
+			type = "dropdown",
+			name = "Hide Chat",
+			tooltip = "Choose an option to hide chat",
+			choices = hideChatChoices,
+			getFunc = function()
+				return IHH.saved.hideChat
+			end,
+			setFunc = function(newValue)
+				IHH.saved.hideChat = newValue
+			end,
+		},
+
+		{ type = "header", name = "ADDON COMPATIBILITY" },
+		{ type = "description", text = "Toggle compatibility for your installed addons." },
+
+		{
+			type = "checkbox",
+			name = "Hide Mini Map",
+			tooltip = "Toggle the minimap from multiple addons",
+			disabled = function()
+				return not IHH.hasMap
+			end,
+			warning = not IHH.hasMap and function()
+				return "A supported minimap addon is not installed & enabled."
+			end,
+			getFunc = function()
+				return IHH.saved.hideMap
+			end,
+			setFunc = function(v)
+				IHH.saved.hideMap = v
+			end,
+		},
+
+		{
+			type = "checkbox",
+			name = "Hide Srendarr Buffs",
+			tooltip = "Toggle Srendarr widgets.",
+			disabled = function()
+				return not IHH.hasSrendarr
+			end,
+			warning = not IHH.hasSrendarr and function()
+				return "Srendarr addon is not installed & enabled."
+			end,
+			getFunc = function()
+				return IHH.saved.hideSrendarr
+			end,
+			setFunc = function(v)
+				IHH.saved.hideSrendarr = v
+			end,
+		},
+
+		{
+			type = "checkbox",
+			name = "Hide Ravalox Quest Tracker",
+			tooltip = "Toggle the Ravalox Quest Tracker widget.",
+			disabled = function()
+				return not IHH.hasRavalox
+			end,
+			warning = not IHH.hasRavalox and function()
+				return "Ravalox's Quest Tracker addon is not installed & enabled."
+			end,
+			getFunc = function()
+				return IHH.saved.hideRavaloxTracker
+			end,
+			setFunc = function(v)
+				IHH.saved.hideRavaloxTracker = v
+			end,
+		},
+
+		{
+			type = "checkbox",
+			name = "Hide Combat Metrics",
+			tooltip = "Toggle for Combat Metric's Live Report.",
+			disabled = function()
+				return not IHH.hasCombatMetrics
+			end,
+			warning = not IHH.hasCombatMetrics and function()
+				return "Combat Metrics addon is not installed & enabled."
+			end,
+			getFunc = function()
+				return IHH.saved.hideCombatMetrics
+			end,
+			setFunc = function(v)
+				IHH.saved.hideCombatMetrics = v
+			end,
+		},
+
+		{
+			type = "checkbox",
+			name = "Hide Event Tracker",
+			tooltip = "Toggle the event tracker addon widget.",
+			disabled = function()
+				return not IHH.hasEventTracker
+			end,
+			warning = not IHH.hasEventTracker and function()
+				return "Event Tracker addon is not installed & enabled."
+			end,
+			getFunc = function()
+				return IHH.saved.hideEventTracker
+			end,
+			setFunc = function(v)
+				IHH.saved.hideEventTracker = v
+			end,
+		},
+	}
+
+	LAM:RegisterOptionControls("IHHPanel", options)
 end
 
-function hideNameplateHealthbars(boolean)
-    if (ImmersiveHUDHider.savedVariables.hideNameplateHealthbars) then
-        if (boolean) then
-            SetSetting(SETTING_TYPE_NAMEPLATES, NAMEPLATE_TYPE_ALL_HEALTHBARS, "false", DO_NOT_SAVE_TO_PERSISTED_DATA)
-        else
-            SetSetting(
-                SETTING_TYPE_NAMEPLATES, NAMEPLATE_TYPE_ALL_HEALTHBARS, ImmersiveHUDHider.savedVariables.defaultAllHealthBars,
-                DO_NOT_SAVE_TO_PERSISTED_DATA
-            )
-        end
-    end
+--------------------------------------------------
+-- INIT
+--------------------------------------------------
+
+function IHH.Initialize()
+	IHH.saved = ZO_SavedVars:NewAccountWide("ImmersiveHUDHiderSavedVariables", 2, "AccountWide", IHH.defaults)
+
+	IHH.Detect()
+
+	IHH.ApplyCore(false)
+
+	EVENT_MANAGER:RegisterForUpdate(IHH.name .. "_crosshair", 500, IHH.hideCrosshair)
+
+	IHH.BuildMenu()
+
+	SLASH_COMMANDS["/immersivehud"] = IHH.Toggle
+	SLASH_COMMANDS["/ihhdebug"] = function(search)
+		for name, obj in pairs(_G) do
+			pcall(function()
+				if zo_strfind(name, search, 1, true) then
+					if type(obj) == "userdata" and obj.SetHidden then
+						d(name)
+					end
+				end
+			end)
+		end
+	end
 end
 
-function hideHUD(boolean)
-    hideInteractableGlow(boolean)
-    hideTargetGlow(boolean)
-    hideQuestBestowerIdicator(boolean)
-    hideGroupIndicators(boolean)
-    hideFollowIndicator(boolean)
-    hideAllianceIndicators(boolean)
-    hideResurrectIndicator(boolean)
-    hideAllNamePlates(boolean)
-    hideChatBubbles(boolean)
-    hideActionBar(boolean)
-    hideBuffs(boolean)
-    hideScrollingCombatText(boolean)
-    hideLootLog(boolean)
-    hideCompass(boolean)
-    hideMinimap(boolean)
-    hideQuestTracker(boolean)
-    hideTargetInfo(boolean)
-    hideBossBar(boolean)
-    hideAttributeBars(boolean)
-    hideFloatingMarkers(boolean)
-    hideGroupFrames(boolean)
-    hideNameplateHealthbars(boolean)
+local function OnLoaded(_, addon)
+	if addon == IHH.name then
+		IHH.Initialize()
+	end
 end
 
-function ImmersiveHUDHider.ImmersiveHUDHiderToggler()
-    if not ImmersiveHUDHider.savedVariables.ImmersiveHUDHider_isUIHidden then
-        ImmersiveHUDHider.interfaceEventHandlerToggle()
-        hideHUD(true)
-        ImmersiveHUDHider.savedVariables.ImmersiveHUDHider_isUIHidden = true
-    else
-        ImmersiveHUDHider.interfaceEventHandlerToggle()
-        ImmersiveHUDHider.setSettingsFromFile()
-        hideHUD(false)
-        ImmersiveHUDHider.savedVariables.ImmersiveHUDHider_isUIHidden = false
-    end
-end
-
-function ImmersiveHUDHider:Initialize()
-    ImmersiveHUDHider.savedVariables = ZO_SavedVars:NewAccountWide(
-                                           "ImmersiveHUDHiderSavedVariables", ImmersiveHUDHider.version, nil, ImmersiveHUDHider.default
-                                       )
-    ImmersiveHUDHider.buildMenu()
-    if ImmersiveHUDHider.savedVariables.ImmersiveHUDHider_isUIHidden == true then
-        ImmersiveHUDHider.setSettingsFromFile()
-        ImmersiveHUDHider.savedVariables.ImmersiveHUDHider_isUIHidden = false
-    else
-        ImmersiveHUDHider.saveSettingsToFile()
-        ImmersiveHUDHider.savedVariables.ImmersiveHUDHider_isUIHidden = false
-    end
-
-    ImmersiveHUDHider.savedVariables.isInterfaceEventHandler = 0
-    ImmersiveHUDHider.interfaceEventHandlerToggle()
-    EVENT_MANAGER:UnregisterForEvent(ImmersiveHUDHider.name, EVENT_ADD_ON_LOADED)
-end
-
-function ImmersiveHUDHider.OnAddOnLoaded(event, addonName)
-    if addonName == ImmersiveHUDHider.name then
-        ImmersiveHUDHider:Initialize()
-    end
-end
-
-EVENT_MANAGER:RegisterForEvent(ImmersiveHUDHider.name, EVENT_ADD_ON_LOADED, ImmersiveHUDHider.OnAddOnLoaded)
-
-SLASH_COMMANDS["/immersivelyhideui"] = ImmersiveHUDHider.ImmersiveHUDHiderToggler
-
-function ImmersiveHUDHider.buildMenu(addonName, version)
-    local LAM = LibAddonMenu2
-
-    local panelData = {
-        type = "panel", name = "Customisable Immersive HUD Hider", displayName = "Customisable Immersive HUD Hider", author = "Alfthebigheaded",
-        version = ImmersiveHUDHider.version, registerForRefresh = true, registerForDefaults = true
-    }
-
-    LAM:RegisterAddonPanel("Customisable Immersive HUD Hider", panelData)
-
-    local optionsData = {
-        {type = "header", name = "CIHUDH Header"}, {type = "description", name = "desc"}, {
-            type = "checkbox", name = "Hide Interactable Glow", tooltip = "Toggle", getFunc = function()
-                return ImmersiveHUDHider.savedVariables.hideInteractableGlow
-            end, setFunc = function(newValue)
-                if (newValue) then
-                    ImmersiveHUDHider.savedVariables.hideInteractableGlow = true
-                else
-                    ImmersiveHUDHider.savedVariables.hideInteractableGlow = false
-                end
-            end, width = "full", default = ImmersiveHUDHider.defaultSettingsMenu.hideInteractableGlow
-        }, {
-            type = "checkbox", name = "Hide Target Glow", tooltip = "Toggle", getFunc = function()
-                return ImmersiveHUDHider.savedVariables.hideTargetGlow
-            end, setFunc = function(newValue)
-                if (newValue) then
-                    ImmersiveHUDHider.savedVariables.hideTargetGlow = true
-                else
-                    ImmersiveHUDHider.savedVariables.hideTargetGlow = false
-                end
-            end, width = "full", default = ImmersiveHUDHider.defaultSettingsMenu.hideTargetGlow
-        }, {
-            type = "checkbox", name = "Hide Quest Bestowers", tooltip = "Toggle", getFunc = function()
-                return ImmersiveHUDHider.savedVariables.hideQuestBestowerIndicator
-            end, setFunc = function(newValue)
-                if (newValue) then
-                    ImmersiveHUDHider.savedVariables.hideQuestBestowerIndicator = true
-                else
-                    ImmersiveHUDHider.savedVariables.hideQuestBestowerIndicator = false
-                end
-            end, width = "full", default = ImmersiveHUDHider.defaultSettingsMenu.hideQuestBestowerIndicator
-        }, {
-            type = "checkbox", name = "Hide Group Indicators", tooltip = "Toggle", getFunc = function()
-                return ImmersiveHUDHider.savedVariables.hideGroupIndicators
-            end, setFunc = function(newValue)
-                if (newValue) then
-                    ImmersiveHUDHider.savedVariables.hideGroupIndicators = true
-                else
-                    ImmersiveHUDHider.savedVariables.hideGroupIndicators = false
-                end
-            end, width = "full", default = ImmersiveHUDHider.defaultSettingsMenu.hideGroupIndicators
-        }, {
-            type = "checkbox", name = "Hide Follow Indicator", tooltip = "Toggle", getFunc = function()
-                return ImmersiveHUDHider.savedVariables.hideFollowIndicator
-            end, setFunc = function(newValue)
-                if (newValue) then
-                    ImmersiveHUDHider.savedVariables.hideFollowIndicator = true
-                else
-                    ImmersiveHUDHider.savedVariables.hideFollowIndicator = false
-                end
-            end, width = "full", default = ImmersiveHUDHider.defaultSettingsMenu.hideFollowIndicator
-        }, {
-            type = "checkbox", name = "Hide Alliance Indicators", tooltip = "Toggle", getFunc = function()
-                return ImmersiveHUDHider.savedVariables.hideAllianceIndicators
-            end, setFunc = function(newValue)
-                if (newValue) then
-                    ImmersiveHUDHider.savedVariables.hideAllianceIndicators = true
-                else
-                    ImmersiveHUDHider.savedVariables.hideAllianceIndicators = false
-                end
-            end, width = "full", default = ImmersiveHUDHider.defaultSettingsMenu.hideAllianceIndicators
-        }, {
-            type = "checkbox", name = "Hide Ressurrect Indicator", tooltip = "Toggle", getFunc = function()
-                return ImmersiveHUDHider.savedVariables.hideResurrectIndicator
-            end, setFunc = function(newValue)
-                if (newValue) then
-                    ImmersiveHUDHider.savedVariables.hideResurrectIndicator = true
-                else
-                    ImmersiveHUDHider.savedVariables.hideResurrectIndicator = false
-                end
-            end, width = "full", default = ImmersiveHUDHider.defaultSettingsMenu.hideResurrectIndicator
-        }, {
-            type = "checkbox", name = "Hide Health Bars", tooltip = "Toggle", getFunc = function()
-                return ImmersiveHUDHider.savedVariables.hideAllHealthBars
-            end, setFunc = function(newValue)
-                if (newValue) then
-                    ImmersiveHUDHider.savedVariables.hideAllHealthBars = true
-                else
-                    ImmersiveHUDHider.savedVariables.hideAllHealthBars = false
-                end
-            end, width = "full", default = ImmersiveHUDHider.defaultSettingsMenu.hideAllHealthBars
-        }, {
-            type = "checkbox", name = "Hide Name Plates", tooltip = "Toggle", getFunc = function()
-                return ImmersiveHUDHider.savedVariables.hideAllNamePlates
-            end, setFunc = function(newValue)
-                if (newValue) then
-                    ImmersiveHUDHider.savedVariables.hideAllNamePlates = true
-                else
-                    ImmersiveHUDHider.savedVariables.hideAllNamePlates = false
-                end
-            end, width = "full", default = ImmersiveHUDHider.defaultSettingsMenu.hideAllNamePlates
-        }, {
-            type = "checkbox", name = "Hide Chat Bubbles", tooltip = "Toggle", getFunc = function()
-                return ImmersiveHUDHider.savedVariables.hideChatBubbles
-            end, setFunc = function(newValue)
-                if (newValue) then
-                    ImmersiveHUDHider.savedVariables.hideChatBubbles = true
-                else
-                    ImmersiveHUDHider.savedVariables.hideChatBubbles = false
-                end
-            end, width = "full", default = ImmersiveHUDHider.defaultSettingsMenu.hideChatBubbles
-        }, {
-            type = "checkbox", name = "Hide Action Bar", tooltip = "Toggle", getFunc = function()
-                return ImmersiveHUDHider.savedVariables.hideActionBar
-            end, setFunc = function(newValue)
-                if (newValue) then
-                    ImmersiveHUDHider.savedVariables.hideActionBar = true
-                else
-                    ImmersiveHUDHider.savedVariables.hideActionBar = false
-                end
-            end, width = "full", default = ImmersiveHUDHider.defaultSettingsMenu.hideActionBar
-        }, {
-            type = "checkbox", name = "Hide Attribute Bars", tooltip = "Toggle", getFunc = function()
-                return ImmersiveHUDHider.savedVariables.hideAttributeBar
-            end, setFunc = function(newValue)
-                if (newValue) then
-                    ImmersiveHUDHider.savedVariables.hideAttributeBar = true
-                else
-                    ImmersiveHUDHider.savedVariables.hideAttributeBar = false
-                end
-            end, width = "full", default = ImmersiveHUDHider.defaultSettingsMenu.hideAttributeBar
-        }, {
-            type = "checkbox", name = "Hide Buffs", tooltip = "Toggle", getFunc = function()
-                return ImmersiveHUDHider.savedVariables.hideBuffs
-            end, setFunc = function(newValue)
-                if (newValue) then
-                    ImmersiveHUDHider.savedVariables.hideBuffs = true
-                else
-                    ImmersiveHUDHider.savedVariables.hideBuffs = false
-                end
-            end, width = "full", default = ImmersiveHUDHider.defaultSettingsMenu.hideBuffs
-        }, {
-            type = "checkbox", name = "Hide Scrolling Combat Text", tooltip = "Toggle", getFunc = function()
-                return ImmersiveHUDHider.savedVariables.hideScrollingCombatText
-            end, setFunc = function(newValue)
-                if (newValue) then
-                    ImmersiveHUDHider.savedVariables.hideScrollingCombatText = true
-                else
-                    ImmersiveHUDHider.savedVariables.hideScrollingCombatText = false
-                end
-            end, width = "full", default = ImmersiveHUDHider.defaultSettingsMenu.hideScrollingCombatText
-        }, {
-            type = "checkbox", name = "Hide Loot Log", tooltip = "Toggle", getFunc = function()
-                return ImmersiveHUDHider.savedVariables.hideLootLog
-            end, setFunc = function(newValue)
-                if (newValue) then
-                    ImmersiveHUDHider.savedVariables.hideLootLog = true
-                else
-                    ImmersiveHUDHider.savedVariables.hideLootLog = false
-                end
-            end, width = "full", default = ImmersiveHUDHider.defaultSettingsMenu.hideLootLog
-        }, {
-            type = "checkbox", name = "Hide Compass", tooltip = "Toggle", getFunc = function()
-                return ImmersiveHUDHider.savedVariables.hideCompass
-            end, setFunc = function(newValue)
-                if (newValue) then
-                    ImmersiveHUDHider.savedVariables.hideCompass = true
-                else
-                    ImmersiveHUDHider.savedVariables.hideCompass = false
-                end
-            end, width = "full", default = ImmersiveHUDHider.defaultSettingsMenu.hideCompass
-        }, {
-            type = "checkbox", name = "Hide Map", tooltip = "Toggle", getFunc = function()
-                return ImmersiveHUDHider.savedVariables.hideMap
-            end, setFunc = function(newValue)
-                if (newValue) then
-                    ImmersiveHUDHider.savedVariables.hideMap = true
-                else
-                    ImmersiveHUDHider.savedVariables.hideMap = false
-                end
-            end, width = "full", default = ImmersiveHUDHider.defaultSettingsMenu.hideMap
-        }, {
-            type = "checkbox", name = "Hide Quest Tracker", tooltip = "Toggle", getFunc = function()
-                return ImmersiveHUDHider.savedVariables.hideQuestTracker
-            end, setFunc = function(newValue)
-                if (newValue) then
-                    ImmersiveHUDHider.savedVariables.hideQuestTracker = true
-                else
-                    ImmersiveHUDHider.savedVariables.hideQuestTracker = false
-                end
-            end, width = "full", default = ImmersiveHUDHider.defaultSettingsMenu.hideQuestTracker
-        }, {
-            type = "checkbox", name = "Hide Boss Bar", tooltip = "Toggle", getFunc = function()
-                return ImmersiveHUDHider.savedVariables.hideBossBar
-            end, setFunc = function(newValue)
-                if (newValue) then
-                    ImmersiveHUDHider.savedVariables.hideBossBar = true
-                else
-                    ImmersiveHUDHider.savedVariables.hideBossBar = false
-                end
-            end, width = "full", default = ImmersiveHUDHider.defaultSettingsMenu.hideBossBar
-        }, {
-            type = "checkbox", name = "Hide Group Unit Frames", tooltip = "Toggle", getFunc = function()
-                return ImmersiveHUDHider.savedVariables.hideGroupUnitFrames
-            end, setFunc = function(newValue)
-                if (newValue) then
-                    ImmersiveHUDHider.savedVariables.hideGroupUnitFrames = true
-                else
-                    ImmersiveHUDHider.savedVariables.hideGroupUnitFrames = false
-                end
-            end, width = "full", default = ImmersiveHUDHider.defaultSettingsMenu.hideGroupUnitFrames
-        }, {
-            type = "checkbox", name = "Hide Target Info", tooltip = "Toggle", getFunc = function()
-                return ImmersiveHUDHider.savedVariables.hideTargetInfo
-            end, setFunc = function(newValue)
-                if (newValue) then
-                    ImmersiveHUDHider.savedVariables.hideTargetInfo = true
-                else
-                    ImmersiveHUDHider.savedVariables.hideTargetInfo = false
-                end
-            end, width = "full", default = ImmersiveHUDHider.defaultSettingsMenu.hideTargetInfo
-        }, {
-            type = "button", name = "Apply Settings", func = function()
-                ReloadUI()
-            end
-        }
-
-    }
-
-    LAM:RegisterOptionControls("Customisable Immersive HUD Hider", optionsData)
-end
+EVENT_MANAGER:RegisterForEvent(IHH.name, EVENT_ADD_ON_LOADED, OnLoaded)

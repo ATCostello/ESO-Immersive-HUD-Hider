@@ -1,1 +1,1 @@
-ZO_CreateStringId("SI_BINDING_NAME_IMMERSIVE_HUD_HIDER", "Immersive HUD Hider Toggle")
+ZO_CreateStringId("SI_BINDING_NAME_IMMERSIVE_HUD_HIDER", "Immersive HUD Hider Toggle UI")

@@ -2,7 +2,7 @@
   <Layer name="SI_KEYBINDINGS_CATEGORY_GENERAL">
     <Category name="Immersive HUD Hider Addon">
       <Action name="IMMERSIVE_HUD_HIDER">
-        <Down>SLASH_COMMANDS["/immersivelyhideui"]()</Down>
+        <Down>ImmersiveHUDHider.Toggle()</Down>
       </Action>
     </Category>
   </Layer>
