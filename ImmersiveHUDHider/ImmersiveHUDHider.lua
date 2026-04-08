@@ -130,7 +130,7 @@ function IHH.Detect()
 	IHH.hasEventTracker = EVT ~= nil
 	IHH.hasBanditsCompanions = BCUI ~= nil
 	IHH.hasFancyActionBar = FancyActionBar ~= nil
-
+	IHH.hasVEQ = VEQ ~= nil
 	IHH.hasMap = AUI ~= nil or FyrMM ~= nil or BUI ~= nil or VOTANS_MINIMAP ~= nil
 
 	IHH.hasCombatMetrics = CMX ~= nil
@@ -575,6 +575,17 @@ function IHH.ApplyCore(hidden)
 		if IHH.hasAUI then
 			if AUI_Questtracker then
 				SafeSet(AUI_Questtracker, hidden)
+			end
+		end
+
+		-- Vestige's Epic Quest
+		if IHH.hasVEQ then
+			if VEQ.main then
+				if hidden then
+					VEQ.main:SetHidden(true)
+				else
+					VEQ.main:SetHidden(false)
+				end
 			end
 		end
 	end
